@@ -356,7 +356,7 @@ class KnotHome extends StatefulWidget {
   State<KnotHome> createState() => _KnotHomeState();
 }
 
-class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin {
+class _KnotHomeState extends State<KnotHome> with TickerProviderStateMixin {
   final completedNodes = <int>{};
   final todayCompleted = <int>{};
   final routines = <RoutineItem>[
@@ -393,6 +393,11 @@ class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin
     vsync: this,
     duration: const Duration(milliseconds: 750),
   );
+  int? growingNode;
+  late final AnimationController lineController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
 
   int get currentDayIndex {
     final today = DateTime.now();
@@ -426,6 +431,7 @@ class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin
   void dispose() {
     timer?.cancel();
     tieController.dispose();
+    lineController.dispose();
     super.dispose();
   }
 
@@ -504,11 +510,18 @@ class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin
           todayCompleted.add(completedRoutine);
           completedNodes.add(nodeToTie);
           tyingNode = null;
+          growingNode = nodeToTie;
           selectedRoutine = List.generate(
             routines.length,
             (i) => i,
           ).firstWhere((i) => !todayCompleted.contains(i), orElse: () => 0);
         });
+        // 매듭이 지어진 뒤, 이웃 점까지 노끈이 자라나는 모습을 이어서 보여준다.
+        lineController
+          ..reset()
+          ..forward().whenComplete(() {
+            if (mounted) setState(() => growingNode = null);
+          });
       });
     unawaited(
       KnotFirebaseService.instance.submitClaim(
@@ -748,7 +761,7 @@ class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin
         height: height,
         width: double.infinity,
         child: AnimatedBuilder(
-          animation: tieController,
+          animation: Listenable.merge([tieController, lineController]),
           builder: (context, _) => CustomPaint(
             painter: KnotPainter(
               shape,
@@ -760,6 +773,8 @@ class _KnotHomeState extends State<KnotHome> with SingleTickerProviderStateMixin
               accentColor: themeAccent,
               tyingNode: tyingNode,
               tyingProgress: tieController.value,
+              growingNode: growingNode,
+              lineGrowProgress: lineController.value,
             ),
           ),
         ),
@@ -1257,6 +1272,8 @@ class KnotPainter extends CustomPainter {
     required this.accentColor,
     this.tyingNode,
     this.tyingProgress = 0,
+    this.growingNode,
+    this.lineGrowProgress = 1,
   });
   final ShapeDefinition shape;
   final Set<int> completed;
@@ -1269,6 +1286,10 @@ class KnotPainter extends CustomPainter {
   final int? tyingNode;
   /// 0(고리가 느슨함) 에서 1(매듭이 완전히 조임)까지의 진행률.
   final double tyingProgress;
+  /// 방금 매듭이 지어져 이웃 점까지 실이 자라나는 중인 노드 인덱스(없으면 null).
+  final int? growingNode;
+  /// 0(실이 막 시작함) 에서 1(이웃 점까지 다 이어짐)까지의 진행률.
+  final double lineGrowProgress;
   @override
   void paint(Canvas canvas, Size size) {
     final scale = math.min(size.width, size.height) / 100;
@@ -1287,16 +1308,6 @@ class KnotPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.2
       ..strokeCap = StrokeCap.round;
-    final done = Paint()
-      ..color = foreground
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.4
-      ..strokeCap = StrokeCap.round;
-    final doneHighlight = Paint()
-      ..color = Colors.white.withValues(alpha: .24)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = .8
-      ..strokeCap = StrokeCap.round;
     for (final link in shape.links) {
       final path = Path();
       for (var i = 0; i < link.length; i++) {
@@ -1310,17 +1321,20 @@ class KnotPainter extends CustomPainter {
       canvas.drawPath(path, templateShadow);
       canvas.drawPath(path, template);
       for (var i = 0; i < link.length - 1; i++) {
-        if (completed.contains(link[i]) && completed.contains(link[i + 1])) {
-          final from = p(shape.nodes[link[i]]);
-          final to = p(shape.nodes[link[i + 1]]);
-          canvas.drawLine(from, to, templateShadow..color = const Color(0x28000000));
-          canvas.drawLine(
-            from,
-            to,
-            done,
-          );
-          canvas.drawLine(from.translate(0, -.5), to.translate(0, -.5), doneHighlight);
+        final aIndex = link[i];
+        final bIndex = link[i + 1];
+        if (!completed.contains(aIndex) || !completed.contains(bIndex)) continue;
+        var from = p(shape.nodes[aIndex]);
+        var to = p(shape.nodes[bIndex]);
+        // 방금 매듭이 지어진 점으로 이어지는 실은 즉시 나타나지 않고 자라나듯 보인다.
+        if (growingNode != null && lineGrowProgress < 1) {
+          if (bIndex == growingNode) {
+            to = Offset.lerp(from, to, lineGrowProgress)!;
+          } else if (aIndex == growingNode) {
+            from = Offset.lerp(to, from, lineGrowProgress)!;
+          }
         }
+        _paintRope(canvas, from, to, foreground, background);
       }
     }
     for (var i = 0; i < shape.nodes.length; i++) {
@@ -1377,6 +1391,57 @@ class KnotPainter extends CustomPainter {
     canvas.drawCircle(center, dotRadius, Paint()..color = dotColor.withValues(alpha: ease));
   }
 
+  /// 완료된 두 점 사이를 팽팽한 직선이 아니라, 꼬여 있는 진짜 노끈처럼 그린다.
+  void _paintRope(Canvas canvas, Offset from, Offset to, Color foreground, Color background) {
+    if ((to - from).distance < 0.6) return;
+    final shadow = Paint()
+      ..color = const Color(0x24000000)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.8
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(_twistPath(from, to, 0, 0), shadow);
+    final strandFront = Paint()
+      ..color = foreground
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.7
+      ..strokeCap = StrokeCap.round;
+    final strandBack = Paint()
+      ..color = Color.lerp(foreground, background, .45)!
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.7
+      ..strokeCap = StrokeCap.round;
+    canvas.drawPath(_twistPath(from, to, 1.6, math.pi), strandBack);
+    canvas.drawPath(_twistPath(from, to, 1.6, 0), strandFront);
+  }
+
+  /// [amplitude]가 0이면 곧은 직선, 아니면 둘레를 따라 꼬인 사인 곡선을 만든다.
+  Path _twistPath(Offset from, Offset to, double amplitude, double phase) {
+    final delta = to - from;
+    final length = delta.distance;
+    if (length < 0.01 || amplitude == 0) {
+      return Path()
+        ..moveTo(from.dx, from.dy)
+        ..lineTo(to.dx, to.dy);
+    }
+    const wavelength = 9.0;
+    final path = Path();
+    final direction = delta / length;
+    final perpendicular = Offset(-direction.dy, direction.dx);
+    final steps = math.max(2, (length / 2.2).round());
+    for (var i = 0; i <= steps; i++) {
+      final t = i / steps;
+      final travelled = t * length;
+      final wave = math.sin(travelled / wavelength * 2 * math.pi + phase) * amplitude;
+      final point = from + delta * t + perpendicular * wave;
+      if (i == 0) {
+        path.moveTo(point.dx, point.dy);
+      } else {
+        path.lineTo(point.dx, point.dy);
+      }
+    }
+    return path;
+  }
+
   @override
   bool shouldRepaint(covariant KnotPainter old) =>
       old.shape != shape ||
@@ -1385,5 +1450,7 @@ class KnotPainter extends CustomPainter {
       old.current != current ||
       old.holding != holding ||
       old.tyingNode != tyingNode ||
-      old.tyingProgress != tyingProgress;
+      old.tyingProgress != tyingProgress ||
+      old.growingNode != growingNode ||
+      old.lineGrowProgress != lineGrowProgress;
 }
