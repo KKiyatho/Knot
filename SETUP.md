@@ -17,9 +17,9 @@ flutter run -d chrome
 
 ## Firebase 연결
 
-Firebase 패키지, 익명 인증, Realtime Database, Analytics가 연결되어 있습니다. 제공된 `knot-de1a1` Web 설정은 [lib/firebase_options.dart](lib/firebase_options.dart)에 등록되어 있으며, 앱은 시작 시 익명 세션을 만들고 루틴 claim과 집계 이벤트를 기록합니다.
+Firebase 패키지, Google 인증, Realtime Database, Analytics가 연결되어 있습니다. 제공된 `knot-de1a1` Web 설정은 [lib/firebase_options.dart](lib/firebase_options.dart)에 등록되어 있으며, 앱은 시작 화면에서 Google 로그인 후 루틴 claim과 집계 이벤트를 기록합니다.
 
-1. Firebase Console에서 `knot-de1a1` 프로젝트의 Anonymous Authentication을 활성화합니다.
+1. Firebase Console에서 `knot-de1a1` 프로젝트의 Google Authentication 제공업체를 활성화합니다.
 2. FlutterFire CLI가 필요하면 설치합니다.
 
 ```powershell

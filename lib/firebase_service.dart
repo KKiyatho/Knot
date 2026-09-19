@@ -23,11 +23,9 @@ class KnotFirebaseService {
           options: kIsWeb ? DefaultFirebaseOptions.web : null,
         );
       }
-      user =
-          FirebaseAuth.instance.currentUser ??
-          (await FirebaseAuth.instance.signInAnonymously()).user;
+        user = FirebaseAuth.instance.currentUser;
       analytics = FirebaseAnalytics.instance;
-      isReady = user != null;
+        isReady = true;
     } on FirebaseException {
       isReady = false;
     } catch (_) {

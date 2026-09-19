@@ -14,7 +14,7 @@ void main() {
   testWidgets('Knot shows the weekly routine drawer', (
     WidgetTester tester,
   ) async {
-    await tester.pumpWidget(const KnotApp());
+    await tester.pumpWidget(const KnotApp(requireGoogle: false));
 
     expect(find.textContaining('Routine'), findsOneWidget);
     await tester.scrollUntilVisible(
